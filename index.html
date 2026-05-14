@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Огненная коза</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #000; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+
+    #overlay {
+      position: fixed; inset: 0; pointer-events: none; z-index: 10;
+      display: flex; flex-direction: column; justify-content: space-between;
+      padding: env(safe-area-inset-top, 20px) 20px env(safe-area-inset-bottom, 20px) 20px;
+    }
+    #hint {
+      background: rgba(0,0,0,0.65); color: white; padding: 14px 18px;
+      border-radius: 12px; text-align: center; font-size: 15px;
+      line-height: 1.4; max-width: 360px; margin: 20px auto 0;
+      backdrop-filter: blur(10px); transition: opacity 0.4s;
+    }
+    #hint.hidden { opacity: 0; }
+    #status {
+      align-self: center; background: rgba(0,0,0,0.65); color: #fff;
+      padding: 8px 14px; border-radius: 20px; font-size: 13px;
+      margin-bottom: 20px; backdrop-filter: blur(10px);
+    }
+    #loader {
+      position: fixed; inset: 0;
+      background: radial-gradient(circle at center, #1a0f1a, #050308);
+      color: white;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      z-index: 100; font-size: 16px; text-align: center; padding: 20px;
+    }
+    #loader.hidden { display: none; }
+    .spinner {
+      width: 44px; height: 44px; border: 3px solid rgba(255,255,255,0.12);
+      border-top-color: #ff7b3d; border-radius: 50%;
+      animation: spin 0.9s linear infinite; margin-bottom: 20px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #start-btn {
+      pointer-events: auto;
+      background: linear-gradient(135deg, #ff7b3d, #b347ff);
+      color: white; border: none; padding: 16px 36px;
+      border-radius: 30px; font-size: 16px; font-weight: 600;
+      cursor: pointer; margin-top: 28px;
+      box-shadow: 0 4px 24px rgba(255,123,61,0.5);
+      letter-spacing: 0.3px;
+    }
+    #start-btn:active { transform: scale(0.97); }
+    .loader-title { font-size: 14px; opacity: 0.65; letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 8px; }
+    .loader-sub { font-size: 18px; font-weight: 500; }
+  </style>
+
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+</head>
+<body>
+
+  <div id="loader">
+    <div class="spinner"></div>
+    <div class="loader-title">Огненная коза</div>
+    <div class="loader-sub">Пробуждаем магию...</div>
+    <button id="start-btn" style="display:none;">Включить камеру</button>
+  </div>
+
+  <div id="overlay">
+    <div id="hint">Наведи камеру на игрушку</div>
+    <div id="status">Ищу козу...</div>
+  </div>
+
+  <a-scene
+    mindar-image="imageTargetSrc: ./targets.mind; autoStart: false; uiLoading: no; uiError: no; uiScanning: no; maxTrack: 1; filterMinCF: 0.0001; filterBeta: 0.005;"
+    color-space="sRGB"
+    renderer="colorManagement: true, alpha: true, antialias: true"
+    vr-mode-ui="enabled: false"
+    device-orientation-permission-ui="enabled: false">
+
+    <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+
+    <a-entity id="target" mindar-image-target="targetIndex: 0">
+      <a-entity id="fire-container"></a-entity>
+    </a-entity>
+  </a-scene>
+
+  <script>
+    const loader = document.getElementById('loader');
+    const startBtn = document.getElementById('start-btn');
+    const loaderSub = loader.querySelector('.loader-sub');
+    const hint = document.getElementById('hint');
+    const status = document.getElementById('status');
+    const sceneEl = document.querySelector('a-scene');
+    const targetEl = document.getElementById('target');
+    const fireContainer = document.getElementById('fire-container');
+
+    // Соотношение сторон маркера козы (ширина/высота)
+    const KOZA_ASPECT = 0.490376;
+
+    // ========================================================================
+    // ШЕЙДЕР ОГНЯ
+    // Генерирует пламя процедурно через 3D шум Перлина + многослойную турбулентность.
+    // Цвета: тёплый янтарь снизу → сиреневый сверху, плюс глобальное свечение.
+    // ========================================================================
+    const FIRE_VERTEX_SHADER = `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `;
+
+    const FIRE_FRAGMENT_SHADER = `
+      precision highp float;
+      uniform float uTime;
+      varying vec2 vUv;
+
+      // --- хеш + шум Перлина (классическая реализация) ---
+      vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+      vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+      vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
+      vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+
+      float snoise(vec3 v) {
+        const vec2 C = vec2(1.0/6.0, 1.0/3.0);
+        const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+        vec3 i = floor(v + dot(v, C.yyy));
+        vec3 x0 = v - i + dot(i, C.xxx);
+        vec3 g = step(x0.yzx, x0.xyz);
+        vec3 l = 1.0 - g;
+        vec3 i1 = min(g.xyz, l.zxy);
+        vec3 i2 = max(g.xyz, l.zxy);
+        vec3 x1 = x0 - i1 + C.xxx;
+        vec3 x2 = x0 - i2 + 2.0*C.xxx;
+        vec3 x3 = x0 - D.yyy;
+        i = mod289(i);
+        vec4 p = permute(permute(permute(
+              i.z + vec4(0.0, i1.z, i2.z, 1.0))
+            + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+            + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+        float n_ = 0.142857142857;
+        vec3 ns = n_ * D.wyz - D.xzx;
+        vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+        vec4 x_ = floor(j * ns.z);
+        vec4 y_ = floor(j - 7.0 * x_);
+        vec4 x = x_ *ns.x + ns.yyyy;
+        vec4 y = y_ *ns.x + ns.yyyy;
+        vec4 h = 1.0 - abs(x) - abs(y);
+        vec4 b0 = vec4(x.xy, y.xy);
+        vec4 b1 = vec4(x.zw, y.zw);
+        vec4 s0 = floor(b0)*2.0 + 1.0;
+        vec4 s1 = floor(b1)*2.0 + 1.0;
+        vec4 sh = -step(h, vec4(0.0));
+        vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy;
+        vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww;
+        vec3 p0 = vec3(a0.xy, h.x);
+        vec3 p1 = vec3(a0.zw, h.y);
+        vec3 p2 = vec3(a1.xy, h.z);
+        vec3 p3 = vec3(a1.zw, h.w);
+        vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2,p2), dot(p3,p3)));
+        p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+        vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+        m = m * m;
+        return 42.0 * dot(m*m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));
+      }
+
+      // Многослойная фрактальная турбулентность (даёт "клочья" пламени)
+      float fbm(vec3 p) {
+        float v = 0.0;
+        float amp = 0.5;
+        for (int i = 0; i < 5; i++) {
+          v += snoise(p) * amp;
+          p *= 2.0;
+          amp *= 0.5;
+        }
+        return v;
+      }
+
+      void main() {
+        // uv: 0..1, центр (0.5, 0.5)
+        vec2 uv = vUv;
+        // Центрированные координаты [-1..1], где 1 — половина высоты
+        vec2 p = (uv - 0.5) * 2.0;
+
+        // ---- ПЛАМЯ ----
+        // Поле огня: пламя поднимается вверх (от y=+1 снизу к y=-1 сверху).
+        // ВНИМАНИЕ: в текстурных координатах y=0 это низ, y=1 — верх.
+        // То есть pmem.y - расстояние от центра по вертикали (вверх = -, вниз = +).
+        // Нам нужно, чтобы огонь поднимался от низа козы к голове.
+        // В p.y: -1 верх, +1 низ.
+
+        // Расстояние от центра по вертикали — определяет "поле жизни" огня
+        // Чем дальше от центра вверх — тем сильнее затухает пламя
+        float vert = p.y; // -1 верх, +1 низ
+
+        // Турбулентность движется вверх со временем (огонь "поднимается")
+        vec3 noiseCoord = vec3(p.x * 1.8, p.y * 1.5 - uTime * 0.7, uTime * 0.25);
+        float n = fbm(noiseCoord);
+
+        // Дополнительный быстрый слой — мерцание языков
+        float flicker = snoise(vec3(p * 4.0, uTime * 1.5)) * 0.3;
+        n = n * 1.2 + flicker;
+
+        // Расстояние от центра (в эллиптической метрике — узкая коза)
+        // x ужимаем чтобы огонь был концентрированным по бокам, не разлетался
+        float distFromCenter = length(vec2(p.x * 0.85, p.y * 0.7));
+
+        // Огонь живёт в форме вертикального эллипса вокруг центра
+        // Эта формула задаёт силу пламени: максимум по контуру, спадает к краям и в центре
+        float ring = exp(-pow((distFromCenter - 0.85) * 2.2, 2.0));   // языки по краям
+        float center = exp(-pow(distFromCenter * 1.5, 2.0)) * 0.4;    // лёгкое свечение в центре (подсветка козы)
+
+        // Турбулентные языки идут вверх — больше турбулентности в верхней половине
+        float upBias = smoothstep(0.5, -0.8, p.y); // 0 внизу, 1 вверху
+        float flames = (ring + center) * (0.65 + n * 0.6);
+
+        // Языки рваные сверху, плотные снизу
+        flames *= mix(1.0, smoothstep(-1.0, 0.5, -p.y + n*0.4), 0.7);
+
+        // ---- ЦВЕТА ----
+        // Снизу — золотисто-оранжевый, сверху — фиолетовый (как в референсе)
+        // bottomMix: 0 наверху, 1 внизу
+        float bottomMix = smoothstep(-0.5, 0.8, p.y);
+
+        // Тёплая палитра
+        vec3 colorBottom = mix(vec3(1.0, 0.85, 0.35), vec3(1.0, 0.45, 0.10), 0.5); // золотисто-оранжевый
+        vec3 colorMid    = vec3(1.0, 0.35, 0.15);                                    // глубокий оранжевый
+        vec3 colorTop    = mix(vec3(0.55, 0.30, 0.95), vec3(0.85, 0.50, 1.0), 0.5);  // фиолетово-сиреневый
+
+        // Смешиваем три цвета по высоте
+        vec3 color;
+        if (bottomMix > 0.5) {
+          color = mix(colorMid, colorBottom, (bottomMix - 0.5) * 2.0);
+        } else {
+          color = mix(colorTop, colorMid, bottomMix * 2.0);
+        }
+
+        // Сердцевина пламени — почти белая (горячая)
+        float core = smoothstep(0.7, 1.2, flames);
+        color = mix(color, vec3(1.0, 0.95, 0.85), core * 0.6);
+
+        // ---- ИСКРЫ ----
+        // Редкие яркие точки, поднимающиеся вверх
+        float sparkField = 0.0;
+        for (int i = 0; i < 3; i++) {
+          float fi = float(i);
+          vec2 sp = p * (3.0 + fi * 0.7) + vec2(uTime * 0.3 * (fi - 1.0), -uTime * 1.5 - fi);
+          float s = snoise(vec3(sp, uTime * 0.5 + fi));
+          sparkField += pow(max(0.0, s - 0.55), 4.0) * (3.0 - fi);
+        }
+        // Искры только в зоне пламени и выше
+        sparkField *= smoothstep(-1.0, 0.7, -p.y);
+        sparkField *= smoothstep(1.5, 0.7, distFromCenter);
+
+        // Цвет искр: смесь золотого и сиренево-голубого
+        float sparkType = step(0.5, fract(p.x * 7.0 + p.y * 13.0 + uTime));
+        vec3 sparkColor = mix(vec3(1.0, 0.9, 0.5), vec3(0.7, 0.6, 1.0), sparkType);
+
+        color += sparkColor * sparkField * 1.5;
+
+        // ---- ИТОГОВАЯ ПРОЗРАЧНОСТЬ ----
+        // Альфа: пламя плюс искры
+        float alpha = clamp(flames * 1.2 + sparkField * 1.5, 0.0, 1.0);
+
+        // Усилим яркость самих горячих участков
+        color *= (1.0 + flames * 0.5);
+
+        gl_FragColor = vec4(color, alpha);
+      }
+    `;
+
+    function buildFirePlane() {
+      const material = new THREE.ShaderMaterial({
+        uniforms: {
+          uTime: { value: 0 },
+        },
+        vertexShader: FIRE_VERTEX_SHADER,
+        fragmentShader: FIRE_FRAGMENT_SHADER,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+
+      // Размер плоскости — больше маркера на ~30%, чтобы языки выходили за козу
+      const planeW = 1.0;
+      const planeH = planeW / KOZA_ASPECT;
+      const scale = 1.30;
+      const geo = new THREE.PlaneGeometry(planeW * scale, planeH * scale);
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.position.set(0, 0, 0.02);
+      fireContainer.object3D.add(mesh);
+
+      // Анимация
+      const clock = new THREE.Clock();
+      function tick() {
+        material.uniforms.uTime.value = clock.getElapsedTime();
+        requestAnimationFrame(tick);
+      }
+      tick();
+    }
+
+    sceneEl.addEventListener('loaded', () => {
+      loaderSub.textContent = 'Готово!';
+      startBtn.style.display = 'inline-block';
+      buildFirePlane();
+    });
+
+    startBtn.addEventListener('click', async () => {
+      startBtn.disabled = true;
+      startBtn.textContent = 'Запускаю...';
+      try {
+        const mindarSystem = sceneEl.systems['mindar-image-system'];
+        await mindarSystem.start();
+        loader.classList.add('hidden');
+        setTimeout(() => hint.classList.add('hidden'), 4500);
+      } catch (err) {
+        loaderSub.innerHTML = 'Не удалось получить доступ к камере.<br>Проверь разрешение в настройках браузера.';
+        startBtn.style.display = 'none';
+        console.error(err);
+      }
+    });
+
+    targetEl.addEventListener('targetFound', () => {
+      status.textContent = '🔥 Магия активна';
+      hint.classList.add('hidden');
+    });
+    targetEl.addEventListener('targetLost', () => {
+      status.textContent = 'Ищу козу...';
+    });
+  </script>
+</body>
+</html>
