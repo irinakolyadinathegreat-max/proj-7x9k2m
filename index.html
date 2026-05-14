@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Огненная коза</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #000; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+
+    #overlay {
+      position: fixed; inset: 0; pointer-events: none; z-index: 10;
+      display: flex; flex-direction: column; justify-content: space-between;
+      padding: env(safe-area-inset-top, 20px) 20px env(safe-area-inset-bottom, 20px) 20px;
+    }
+    #hint {
+      background: rgba(0,0,0,0.65); color: white; padding: 14px 18px;
+      border-radius: 12px; text-align: center; font-size: 15px;
+      line-height: 1.4; max-width: 360px; margin: 20px auto 0;
+      backdrop-filter: blur(10px); transition: opacity 0.4s;
+    }
+    #hint.hidden { opacity: 0; }
+    #status {
+      align-self: center; background: rgba(0,0,0,0.65); color: #fff;
+      padding: 8px 14px; border-radius: 20px; font-size: 13px;
+      margin-bottom: 20px; backdrop-filter: blur(10px);
+    }
+    #loader {
+      position: fixed; inset: 0;
+      background: radial-gradient(circle at center, #1a0f1a, #050308);
+      color: white;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      z-index: 100; font-size: 16px; text-align: center; padding: 20px;
+    }
+    #loader.hidden { display: none; }
+    .spinner {
+      width: 44px; height: 44px; border: 3px solid rgba(255,255,255,0.12);
+      border-top-color: #ff7b3d; border-radius: 50%;
+      animation: spin 0.9s linear infinite; margin-bottom: 20px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #start-btn {
+      pointer-events: auto;
+      background: linear-gradient(135deg, #ff7b3d, #b347ff);
+      color: white; border: none; padding: 16px 36px;
+      border-radius: 30px; font-size: 16px; font-weight: 600;
+      cursor: pointer; margin-top: 28px;
+      box-shadow: 0 4px 24px rgba(255,123,61,0.5);
+    }
+    #start-btn:active { transform: scale(0.97); }
+    .loader-title { font-size: 14px; opacity: 0.65; letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 8px; }
+    .loader-sub { font-size: 18px; font-weight: 500; }
+  </style>
+
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+</head>
+<body>
+
+  <div id="loader">
+    <div class="spinner"></div>
+    <div class="loader-title">Огненная коза</div>
+    <div class="loader-sub">Пробуждаем магию...</div>
+    <button id="start-btn" style="display:none;">Включить камеру</button>
+  </div>
+
+  <div id="overlay">
+    <div id="hint">Наведи камеру на игрушку</div>
+    <div id="status">Ищу козу...</div>
+  </div>
+
+  <a-scene
+    mindar-image="imageTargetSrc: ./targets.mind; autoStart: false; uiLoading: no; uiError: no; uiScanning: no; maxTrack: 1; filterMinCF: 0.0001; filterBeta: 0.005;"
+    color-space="sRGB"
+    renderer="colorManagement: true, alpha: true, antialias: true"
+    vr-mode-ui="enabled: false"
+    device-orientation-permission-ui="enabled: false">
+
+    <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+
+    <a-entity id="target" mindar-image-target="targetIndex: 0">
+      <a-entity id="fire-container"></a-entity>
+    </a-entity>
+  </a-scene>
+
+  <script>
+    const loader = document.getElementById('loader');
+    const startBtn = document.getElementById('start-btn');
+    const loaderSub = loader.querySelector('.loader-sub');
+    const hint = document.getElementById('hint');
+    const status = document.getElementById('status');
+    const sceneEl = document.querySelector('a-scene');
+    const targetEl = document.getElementById('target');
+    const fireContainer = document.getElementById('fire-container');
+
+    const KOZA_ASPECT = 0.495228;
+    const KOZA_CONTOUR = [[-0.0032119914346895075, -0.4395546129374337], [0.03747323340471092, -0.4586426299045599], [0.06745182012847965, -0.3865323435843054], [0.09957173447537473, -0.3769883351007423], [0.11884368308351177, -0.3366914103923648], [0.11884368308351177, -0.26882290562036054], [0.1423982869379015, -0.26458112407211026], [0.22805139186295503, -0.355779427359491], [0.2644539614561028, -0.35365853658536583], [0.2751605995717345, -0.323966065747614], [0.2965738758029979, -0.31018027571580065], [0.31370449678800855, -0.29427359490986216], [0.3265524625267666, -0.27518557794273596], [0.32012847965738755, -0.24443266171792152], [0.33940042826552463, -0.235949098621421], [0.33940042826552463, -0.21474019088016968], [0.3501070663811563, -0.20201484623541888], [0.2580299785867238, -0.13732767762460232], [0.36295503211991437, -0.17550371155885472], [0.3950749464668094, -0.17338282078472958], [0.41220556745182013, -0.16595970307529162], [0.43790149892933616, -0.1606574761399788], [0.4229122055674518, -0.1415694591728526], [0.493576017130621, -0.14899257688229056], [0.5, -0.1352067868504772], [0.5, -0.12142099681866383], [0.49785867237687365, -0.10763520678685047], [0.487152034261242, -0.09278897136797455], [0.4785867237687366, -0.07900318133616119], [0.4657387580299786, -0.06521739130434782], [0.45289079229122053, -0.0535524920466596], [0.43147751605995716, -0.0408271474019088], [0.4100642398286938, -0.02916224814422057], [0.3993576017130621, -0.019618239660657476], [0.38008565310492504, -0.01007423117709438], [0.367237687366167, -0.0015906680805938495], [0.354389721627409, 0.006892895015906681], [0.34796573875803, 0.014316012725344645], [0.34582441113490364, 0.021739130434782608], [0.4443254817987152, 0.03870625662778367], [0.45289079229122053, 0.0503711558854719], [0.45289079229122053, 0.06097560975609756], [0.45074946466809424, 0.07158006362672323], [0.4464668094218415, 0.08218451749734888], [0.4400428265524625, 0.09172852598091198], [0.4336188436830835, 0.1033934252386002], [0.4271948608137045, 0.11399787910922587], [0.4164882226980728, 0.1224814422057264], [0.4014989293361884, 0.13096500530222693], [0.3886509635974304, 0.13944856839872746], [0.37366167023554603, 0.14687168610816542], [0.35224839400428265, 0.15217391304347827], [0.3351177730192719, 0.15853658536585366], [0.3265524625267666, 0.16914103923647933], [0.30728051391862954, 0.17444326617179215], [0.2880085653104925, 0.179745493107105], [0.27301927194860814, 0.1861081654294804], [0.25374732334047106, 0.19247083775185578], [0.30085653104925053, 0.2507953340402969], [0.2837259100642398, 0.2624602332979852], [0.2644539614561028, 0.2741251325556734], [0.2430406852248394, 0.28366914103923646], [0.22162740899357602, 0.2953340402969247], [0.20021413276231265, 0.31018027571580065], [0.2259100642398287, 0.41092258748674443], [0.20021413276231265, 0.4395546129374337], [0.16595289079229122, 0.46076352067868503], [0.12740899357601712, 0.47879109225874866], [0.0867237687366167, 0.4957582184517497], [0.0417558886509636, 0.5], [-0.0032119914346895075, 0.48303287380699894], [-0.046038543897216275, 0.4575821845174973], [-0.08244111349036402, 0.43637327677624604], [-0.11670235546038545, 0.4151643690349947], [-0.14453961456102785, 0.38547189819724287], [-0.16167023554603854, 0.3430540827147402], [-0.13383297644539616, 0.23064687168610817], [-0.15310492505353318, 0.22746553552492046], [-0.1766595289079229, 0.22534464475079533], [-0.19593147751605997, 0.22216330858960764], [-0.21734475374732334, 0.2168610816542948], [-0.23447537473233404, 0.2104984093319194], [-0.2494646680942184, 0.2009544008483563], [-0.2623126338329764, 0.19247083775185578], [-0.2708779443254818, 0.18080593849416754], [-0.2773019271948608, 0.16808059384941676], [-0.29229122055674517, 0.16171792152704137], [-0.3029978586723769, 0.15429480381760338], [-0.31156316916488225, 0.14475079533404028], [-0.31156316916488225, 0.1320254506892895], [-0.24732334047109208, 0.09384941675503712], [-0.2558886509635974, 0.08854718981972429], [-0.2623126338329764, 0.08324496288441145], [-0.27301927194860814, 0.07794273594909862], [-0.2837259100642398, 0.07370095440084835], [-0.2944325481798715, 0.06839872746553552], [-0.30513918629550324, 0.06203605514316013], [-0.31798715203426126, 0.056733828207847295], [-0.3265524625267666, 0.0503711558854719], [-0.33940042826552463, 0.0440084835630965], [-0.35224839400428265, 0.037645811240721104], [-0.36295503211991437, 0.03128313891834571], [-0.3715203426124197, 0.022799575821845174], [-0.38436830835117775, 0.015376458112407211], [-0.3950749464668094, 0.006892895015906681], [-0.4079229122055675, -0.0015906680805938495], [-0.4164882226980728, -0.011134676564156946], [-0.4271948608137045, -0.020678685047720042], [-0.43790149892933616, -0.030222693531283137], [-0.4443254817987152, -0.0408271474019088], [-0.45289079229122053, -0.05249204665959703], [-0.4550321199143469, -0.0630965005302227], [-0.45289079229122053, -0.07370095440084835], [-0.4550321199143469, -0.08536585365853659], [-0.4892933618843683, -0.10445387062566278], [-0.49571734475374735, -0.11930010604453871], [-0.5, -0.13414634146341464], [-0.49785867237687365, -0.147932131495228], [-0.49571734475374735, -0.16171792152704137], [-0.49143468950749464, -0.1765641569459173], [-0.47644539614561027, -0.18822905620360553], [-0.47002141327623126, -0.20307529162248145], [-0.4657387580299786, -0.22110286320254507], [-0.4464668094218415, -0.23064687168610817], [-0.42505353319057815, -0.24019088016967127], [-0.4164882226980728, -0.2582184517497349], [-0.40364025695931477, -0.2730646871686108], [-0.38436830835117775, -0.28791092258748674], [-0.36295503211991437, -0.29957582184517495], [-0.2644539614561028, -0.24125132555673381], [-0.27301927194860814, -0.27942735949098624], [-0.25160599571734477, -0.2889713679745493], [-0.23233404710920771, -0.30275715800636266], [-0.25374732334047106, -0.38335100742311773], [-0.22162740899357602, -0.39077412513255566], [-0.215203426124197, -0.4618239660657476], [-0.16809421841541755, -0.45121951219512196], [-0.12312633832976445, -0.4353128313891835], [-0.09314775160599571, -0.492576882290562], [-0.048179871520342615, -0.5]];
+
+    // Канвас под пропорции вертикальной козы
+    const CANVAS_W = 512;
+    const CANVAS_H = Math.round(CANVAS_W / KOZA_ASPECT);
+    const canvas = document.createElement('canvas');
+    canvas.width = CANVAS_W;
+    canvas.height = CANVAS_H;
+    const ctx = canvas.getContext('2d');
+
+    // Переводим контур в пиксели канваса
+    const contourPx = KOZA_CONTOUR.map(p => ({
+      x: (p[0] + 0.5) * CANVAS_W,
+      y: (p[1] + 0.5) * CANVAS_H
+    }));
+
+    // ====== ПЛАМЯ — два слоя ======
+    // Слой 1: толстое "тело" пламени — большие тёплые языки
+    // Слой 2: яркая "сердцевина" — поменьше, ярче
+    const flameBig = [];
+    const flameSmall = [];
+    const FLAME_BIG = 200;
+    const FLAME_SMALL = 200;
+
+    for (let i = 0; i < FLAME_BIG; i++) {
+      const p = contourPx[Math.floor(Math.random() * contourPx.length)];
+      flameBig.push({
+        baseX: p.x, baseY: p.y,
+        life: Math.random(),
+        speed: 0.003 + Math.random() * 0.005,
+        radius: 30 + Math.random() * 25,
+        seed: Math.random() * 1000,
+        // Сила тяги вверх — точки в верхней половине поднимаются сильнее
+        upBias: p.y < CANVAS_H * 0.4 ? 18 : 6
+      });
+    }
+    for (let i = 0; i < FLAME_SMALL; i++) {
+      const p = contourPx[Math.floor(Math.random() * contourPx.length)];
+      flameSmall.push({
+        baseX: p.x, baseY: p.y,
+        life: Math.random(),
+        speed: 0.005 + Math.random() * 0.008,
+        radius: 12 + Math.random() * 14,
+        seed: Math.random() * 1000,
+        upBias: p.y < CANVAS_H * 0.4 ? 14 : 4
+      });
+    }
+
+    // ====== ИСКРЫ — много мелких, золотых и сиреневых ======
+    const sparks = [];
+    const SPARK_COUNT = 60;
+    function createSpark() {
+      const p = contourPx[Math.floor(Math.random() * contourPx.length)];
+      // 70% золотых, 30% сиреневых
+      const isCold = Math.random() < 0.3;
+      const hue = isCold ? (200 + Math.random() * 80) : (35 + Math.random() * 20);
+      return {
+        x: p.x + (Math.random() - 0.5) * 16,
+        y: p.y,
+        vx: (Math.random() - 0.5) * 0.5,
+        vy: -0.5 - Math.random() * 1.4,
+        life: 1,
+        decay: 0.004 + Math.random() * 0.008,
+        hue,
+        sat: isCold ? 90 : 100,
+        size: 1.0 + Math.random() * 2.2,
+      };
+    }
+    for (let i = 0; i < SPARK_COUNT; i++) sparks.push(createSpark());
+
+    let frame = 0;
+    function drawFire() {
+      frame++;
+
+      // Затухание
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.fillStyle = 'rgba(0,0,0,0.18)';
+      ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+      ctx.globalCompositeOperation = 'lighter';
+
+      // Слой 1: большие тёплые языки — формируют объём пламени
+      flameBig.forEach(p => {
+        p.life += p.speed;
+        if (p.life > 1) {
+          p.life = 0;
+          if (Math.random() < 0.08) {
+            const np = contourPx[Math.floor(Math.random() * contourPx.length)];
+            p.baseX = np.x; p.baseY = np.y;
+            p.upBias = np.y < CANVAS_H * 0.4 ? 18 : 6;
+          }
+        }
+        const wX = Math.sin((frame + p.seed) * 0.04) * 3;
+        const wY = Math.cos((frame + p.seed) * 0.035) * 3 - p.life * p.upBias;
+        const x = p.baseX + wX;
+        const y = p.baseY + wY;
+        const r = p.radius * (1 - p.life * 0.35);
+        const alpha = (1 - p.life) * 0.55;
+
+        // Цвет зависит от высоты: внизу — тёпло-золотой, наверху — фиолетовый
+        const yFrac = y / CANVAS_H; // 0 верх, 1 низ
+        const isUpper = yFrac < 0.35;
+
+        const grd = ctx.createRadialGradient(x, y, 0, x, y, r);
+        if (isUpper) {
+          // Фиолетово-сиреневое пламя сверху
+          grd.addColorStop(0, `rgba(230, 200, 255, ${alpha * 0.9})`);
+          grd.addColorStop(0.3, `rgba(180, 100, 240, ${alpha * 0.8})`);
+          grd.addColorStop(0.7, `rgba(120, 50, 180, ${alpha * 0.4})`);
+          grd.addColorStop(1, `rgba(70, 20, 120, 0)`);
+        } else {
+          // Тёплое золотое внизу и по бокам
+          grd.addColorStop(0, `rgba(255, 245, 200, ${alpha})`);
+          grd.addColorStop(0.3, `rgba(255, 175, 70, ${alpha * 0.9})`);
+          grd.addColorStop(0.7, `rgba(255, 100, 30, ${alpha * 0.5})`);
+          grd.addColorStop(1, `rgba(180, 40, 10, 0)`);
+        }
+
+        ctx.fillStyle = grd;
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      // Слой 2: яркие маленькие сердцевины
+      flameSmall.forEach(p => {
+        p.life += p.speed;
+        if (p.life > 1) {
+          p.life = 0;
+          if (Math.random() < 0.15) {
+            const np = contourPx[Math.floor(Math.random() * contourPx.length)];
+            p.baseX = np.x; p.baseY = np.y;
+            p.upBias = np.y < CANVAS_H * 0.4 ? 14 : 4;
+          }
+        }
+        const wX = Math.sin((frame + p.seed) * 0.06) * 2;
+        const wY = Math.cos((frame + p.seed) * 0.05) * 2 - p.life * p.upBias;
+        const x = p.baseX + wX;
+        const y = p.baseY + wY;
+        const r = p.radius * (1 - p.life * 0.4);
+        const alpha = (1 - p.life) * 0.6;
+
+        const yFrac = y / CANVAS_H;
+        const isUpper = yFrac < 0.35;
+
+        const grd = ctx.createRadialGradient(x, y, 0, x, y, r);
+        if (isUpper) {
+          grd.addColorStop(0, `rgba(255, 230, 255, ${alpha})`);
+          grd.addColorStop(0.5, `rgba(200, 130, 255, ${alpha * 0.5})`);
+          grd.addColorStop(1, `rgba(100, 50, 180, 0)`);
+        } else {
+          grd.addColorStop(0, `rgba(255, 255, 230, ${alpha})`);
+          grd.addColorStop(0.5, `rgba(255, 200, 100, ${alpha * 0.5})`);
+          grd.addColorStop(1, `rgba(255, 100, 30, 0)`);
+        }
+        ctx.fillStyle = grd;
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      // Искры — обильные
+      sparks.forEach((s, i) => {
+        s.x += s.vx;
+        s.y += s.vy;
+        s.vy += 0.005;
+        s.life -= s.decay;
+        if (s.life <= 0) { sparks[i] = createSpark(); return; }
+
+        const alpha = s.life;
+        const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, s.size * 5);
+        g.addColorStop(0, `hsla(${s.hue}, ${s.sat}%, 85%, ${alpha})`);
+        g.addColorStop(0.4, `hsla(${s.hue}, ${s.sat}%, 60%, ${alpha * 0.5})`);
+        g.addColorStop(1, `hsla(${s.hue}, ${s.sat}%, 40%, 0)`);
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, s.size * 5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Яркое ядро
+        ctx.fillStyle = `hsla(${s.hue}, ${s.sat}%, 98%, ${alpha})`;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      requestAnimationFrame(drawFire);
+    }
+
+    let fireTexture = null;
+    function buildFirePlane() {
+      fireTexture = new THREE.CanvasTexture(canvas);
+      fireTexture.colorSpace = THREE.SRGBColorSpace;
+
+      const planeW = 1.0;
+      const planeH = planeW / KOZA_ASPECT;
+      const scale = 1.18;
+      const geo = new THREE.PlaneGeometry(planeW * scale, planeH * scale);
+      const mat = new THREE.MeshBasicMaterial({
+        map: fireTexture,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(0, 0, 0.02);
+      fireContainer.object3D.add(mesh);
+
+      function updateTexture() {
+        if (fireTexture) fireTexture.needsUpdate = true;
+        requestAnimationFrame(updateTexture);
+      }
+      updateTexture();
+    }
+
+    sceneEl.addEventListener('loaded', () => {
+      loaderSub.textContent = 'Готово!';
+      startBtn.style.display = 'inline-block';
+      buildFirePlane();
+      drawFire();
+    });
+
+    startBtn.addEventListener('click', async () => {
+      startBtn.disabled = true;
+      startBtn.textContent = 'Запускаю...';
+      try {
+        const mindarSystem = sceneEl.systems['mindar-image-system'];
+        await mindarSystem.start();
+        loader.classList.add('hidden');
+        setTimeout(() => hint.classList.add('hidden'), 4500);
+      } catch (err) {
+        loaderSub.innerHTML = 'Не удалось получить доступ к камере.<br>Проверь разрешение в настройках браузера.';
+        startBtn.style.display = 'none';
+        console.error(err);
+      }
+    });
+
+    targetEl.addEventListener('targetFound', () => {
+      status.textContent = '🔥 Магия активна';
+      hint.classList.add('hidden');
+    });
+    targetEl.addEventListener('targetLost', () => {
+      status.textContent = 'Ищу козу...';
+    });
+  </script>
+</body>
+</html>
