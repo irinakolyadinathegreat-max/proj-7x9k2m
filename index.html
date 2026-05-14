@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Огненная коза</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #000; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+
+    #overlay {
+      position: fixed; inset: 0; pointer-events: none; z-index: 10;
+      display: flex; flex-direction: column; justify-content: space-between;
+      padding: env(safe-area-inset-top, 20px) 20px env(safe-area-inset-bottom, 20px) 20px;
+    }
+    #hint {
+      background: rgba(0,0,0,0.65); color: white; padding: 14px 18px;
+      border-radius: 12px; text-align: center; font-size: 15px;
+      line-height: 1.4; max-width: 360px; margin: 20px auto 0;
+      backdrop-filter: blur(10px); transition: opacity 0.4s;
+    }
+    #hint.hidden { opacity: 0; }
+    #status {
+      align-self: center; background: rgba(0,0,0,0.65); color: #fff;
+      padding: 8px 14px; border-radius: 20px; font-size: 13px;
+      margin-bottom: 20px; backdrop-filter: blur(10px);
+    }
+    #loader {
+      position: fixed; inset: 0;
+      background: radial-gradient(circle at center, #1a0f1a, #050308);
+      color: white;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      z-index: 100; font-size: 16px; text-align: center; padding: 20px;
+    }
+    #loader.hidden { display: none; }
+    .spinner {
+      width: 44px; height: 44px; border: 3px solid rgba(255,255,255,0.12);
+      border-top-color: #b347ff; border-radius: 50%;
+      animation: spin 0.9s linear infinite; margin-bottom: 20px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #start-btn {
+      pointer-events: auto;
+      background: linear-gradient(135deg, #ff7b3d, #b347ff);
+      color: white; border: none; padding: 16px 36px;
+      border-radius: 30px; font-size: 16px; font-weight: 600;
+      cursor: pointer; margin-top: 28px;
+      box-shadow: 0 4px 24px rgba(179,71,255,0.5);
+      letter-spacing: 0.3px;
+    }
+    #start-btn:active { transform: scale(0.97); }
+    .loader-title { font-size: 14px; opacity: 0.65; letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 8px; }
+    .loader-sub { font-size: 18px; font-weight: 500; }
+  </style>
+
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+</head>
+<body>
+
+  <div id="loader">
+    <div class="spinner"></div>
+    <div class="loader-title">Огненная коза</div>
+    <div class="loader-sub">Пробуждаем магию...</div>
+    <button id="start-btn" style="display:none;">Включить камеру</button>
+  </div>
+
+  <div id="overlay">
+    <div id="hint">Наведи камеру на игрушку</div>
+    <div id="status">Ищу козу...</div>
+  </div>
+
+  <a-scene
+    mindar-image="imageTargetSrc: ./targets.mind; autoStart: false; uiLoading: no; uiError: no; uiScanning: no; maxTrack: 1; filterMinCF: 0.0001; filterBeta: 0.005;"
+    color-space="sRGB"
+    renderer="colorManagement: true, alpha: true, antialias: true"
+    vr-mode-ui="enabled: false"
+    device-orientation-permission-ui="enabled: false">
+
+    <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+
+    <a-entity id="target" mindar-image-target="targetIndex: 0">
+      <a-entity id="fire-container"></a-entity>
+    </a-entity>
+  </a-scene>
+
+  <script>
+    const loader = document.getElementById('loader');
+    const startBtn = document.getElementById('start-btn');
+    const loaderSub = loader.querySelector('.loader-sub');
+    const hint = document.getElementById('hint');
+    const status = document.getElementById('status');
+    const sceneEl = document.querySelector('a-scene');
+    const targetEl = document.getElementById('target');
+    const fireContainer = document.getElementById('fire-container');
+
+    // ====== КОНТУР КОЗЫ (140 точек, нормализованные координаты [-0.5..0.5]) ======
+    const KOZA_ASPECT = 0.490376;
+    const KOZA_CONTOUR = [[-0.4009345794392523, 0.01237396883593034], [-0.42149532710280374, -0.010540788267644362], [-0.44018691588785047, -0.033455545371219066], [-0.46074766355140184, -0.05728689275893675], [-0.4663551401869159, -0.08020164986251145], [-0.48130841121495327, -0.10403299725022915], [-0.4869158878504673, -0.12603116406966086], [-0.49439252336448597, -0.14986251145737856], [-0.49252336448598133, -0.17369385884509625], [-0.47757009345794393, -0.19660861594867093], [-0.46074766355140184, -0.21952337305224565], [-0.43644859813084114, -0.24335472043996334], [-0.4046728971962617, -0.26535288725939504], [-0.36542056074766355, -0.28918423464711274], [-0.3205607476635514, -0.31301558203483043], [-0.29626168224299065, -0.3075160403299725], [-0.2588785046728972, -0.28918423464711274], [-0.22149532710280373, -0.270852428964253], [-0.20093457943925233, -0.29651695692025665], [-0.1897196261682243, -0.31668194317140236], [-0.2046728971962617, -0.3735105407882676], [-0.18785046728971963, -0.34876260311640694], [-0.18598130841121496, -0.3542621448212649], [-0.15981308411214953, -0.39917506874427133], [-0.12990654205607477, -0.41934005499541704], [-0.12429906542056075, -0.421173235563703], [-0.12990654205607477, -0.46608615948670945], [-0.09065420560747664, -0.4486709440879927], [-0.06261682242990654, -0.42667277726856095], [-0.038317757009345796, -0.425756186984418], [-0.03271028037383177, -0.4285059578368469], [-0.02897196261682243, -0.4835013748854262], [0.014018691588785047, -0.4963336388634281], [0.06261682242990654, -0.49816681943171404], [0.09626168224299066, -0.48991750687442714], [0.1130841121495327, -0.4844179651695692], [0.1280373831775701, -0.4770852428964253], [0.12242990654205607, -0.41934005499541704], [0.14299065420560747, -0.45875343721356554], [0.12242990654205607, -0.3762603116406966], [0.16355140186915887, -0.3615948670944088], [0.17476635514018693, -0.3386801099908341], [0.1616822429906542, -0.3065994500458295], [0.15981308411214953, -0.2946837763519707], [0.15794392523364487, -0.26443629697525206], [0.17850467289719626, -0.24427131072410632], [0.2588785046728972, -0.3212648945921173], [0.24766355140186916, -0.3001833180568286], [0.2457943925233645, -0.2846012832263978], [0.25327102803738316, -0.2772685609532539], [0.3205607476635514, -0.33593033913840514], [0.3205607476635514, -0.32768102658111825], [0.2607476635514019, -0.25802016498625113], [0.3205607476635514, -0.30476626947754354], [0.3317757009345794, -0.2791017415215399], [0.36355140186915885, -0.25710357470210815], [0.3691588785046729, -0.23510540788267645], [0.3560747663551402, -0.2094408799266728], [0.3542056074766355, -0.18744271310724106], [0.36728971962616824, -0.16452795600366635], [0.42710280373831777, -0.1764436296975252], [0.4514018691588785, -0.18010999083409715], [0.4738317757009346, -0.15627864344637946], [0.48878504672897194, -0.13336388634280477], [0.4981308411214953, -0.11044912923923006], [0.49065420560747663, -0.08661778185151238], [0.47570093457943924, -0.06370302474793767], [0.4532710280373832, -0.04078826764436297], [0.41962616822429905, -0.017873510540788267], [0.3710280373831776, 0.004124656278643446], [0.3280373831775701, 0.025206232813932174], [0.29439252336448596, 0.04812098991750687], [0.40654205607476634, 0.07653528872593951], [0.37850467289719625, 0.08111824014665445], [0.3616822429906542, 0.08570119156736938], [0.33738317757009345, 0.08845096241979836], [0.3186915887850467, 0.08936755270394134], [0.3822429906542056, 0.1223648029330889], [0.3560747663551402, 0.14436296975252064], [0.3205607476635514, 0.1681943171402383], [0.2719626168224299, 0.18102658111824016], [0.22336448598130842, 0.193858845096242], [0.1766355140186916, 0.20669110907424382], [0.19532710280373833, 0.2616865261228231], [0.1766355140186916, 0.2626031164069661], [0.1616822429906542, 0.266269477543538], [0.14485981308411214, 0.2635197066911091], [0.1485981308411215, 0.29560036663611367], [0.13551401869158877, 0.29651695692025665], [0.09813084112149532, 0.3175985334555454], [0.08878504672897196, 0.34967919340055], [0.08691588785046729, 0.36434463794683775], [0.09252336448598131, 0.4046746104491292], [0.08878504672897196, 0.41017415215398717], [0.06635514018691589, 0.41200733272227313], [0.05514018691588785, 0.39642529789184233], [0.014018691588785047, 0.3735105407882676], [0.0065420560747663555, 0.3707607699358387], [-0.004672897196261682, 0.4129239230064161], [-0.01588785046728972, 0.45142071494042163], [-0.02897196261682243, 0.45875343721356554], [-0.03271028037383177, 0.36617781851512377], [-0.04205607476635514, 0.3982584784601283], [-0.05700934579439252, 0.4596700274977085], [-0.05514018691588785, 0.37442713107241066], [-0.06635514018691589, 0.3927589367552704], [-0.08504672897196262, 0.4523373052245646], [-0.09439252336448598, 0.4486709440879927], [-0.09065420560747664, 0.3863428047662695], [-0.11682242990654206, 0.46333638863428045], [-0.10373831775700934, 0.3780934922089826], [-0.12242990654205607, 0.423006416131989], [-0.14299065420560747, 0.4798350137488543], [-0.1261682242990654, 0.40650779101741524], [-0.13177570093457944, 0.41109074243813015], [-0.15046728971962617, 0.4376718606782768], [-0.15794392523364487, 0.4294225481209899], [-0.1542056074766355, 0.40375802016498624], [-0.19906542056074766, 0.4450045829514207], [-0.23271028037383176, 0.422089825847846], [-0.17102803738317757, 0.2864344637946838], [-0.24766355140186916, 0.4055912007332722], [-0.19345794392523363, 0.3102658111824015], [-0.21214953271028036, 0.3258478460128323], [-0.17476635514018693, 0.25618698441796517], [-0.23457943925233646, 0.32768102658111825], [-0.2457943925233645, 0.3258478460128323], [-0.27009345794392525, 0.34051329055912005], [-0.2757009345794392, 0.32859761686526123], [-0.21214953271028036, 0.2314390467461045], [-0.2588785046728972, 0.21677360219981667], [-0.3037383177570093, 0.20119156736938587], [-0.33925233644859815, 0.17919340054995417], [-0.3560747663551402, 0.15536205316223647], [-0.3616822429906542, 0.14252978918423465], [-0.29439252336448596, 0.11228230980751604], [-0.2850467289719626, 0.10128322639780019], [-0.3728971962616822, 0.11961503208065995], [-0.2925233644859813, 0.0838680109990834], [-0.3299065420560748, 0.06095325389550871]];
+
+    // ====== Канвас для генерации огня ======
+    // Подбираем размер канваса под пропорции игрушки. Вертикальная коза, aspect ~0.49.
+    const CANVAS_W = 384;
+    const CANVAS_H = Math.round(CANVAS_W / KOZA_ASPECT);
+    const canvas = document.createElement('canvas');
+    canvas.width = CANVAS_W;
+    canvas.height = CANVAS_H;
+    const ctx = canvas.getContext('2d');
+
+    // Переводим точки контура в пиксели канваса
+    const contourPx = KOZA_CONTOUR.map(p => ({
+      x: (p[0] + 0.5) * CANVAS_W,
+      y: (p[1] + 0.5) * CANVAS_H
+    }));
+
+    // ====== Частицы пламени (тёплое золото) ======
+    const flameParticles = [];
+    const FLAME_COUNT = 150;
+    for (let i = 0; i < FLAME_COUNT; i++) {
+      const idx = Math.floor(Math.random() * contourPx.length);
+      const p = contourPx[idx];
+      flameParticles.push({
+        baseX: p.x, baseY: p.y,
+        life: Math.random(),
+        speed: 0.004 + Math.random() * 0.006,
+        radius: 16 + Math.random() * 14,
+        offsetSeed: Math.random() * 1000,
+      });
+    }
+
+    // ====== Искры (голубые/фиолетовые — резонанс с синим камнем) ======
+    const sparks = [];
+    const SPARK_COUNT = 35;
+    function createSpark() {
+      const idx = Math.floor(Math.random() * contourPx.length);
+      const p = contourPx[idx];
+      const hue = 195 + Math.random() * 90; // голубой → фиолетовый
+      return {
+        x: p.x + (Math.random() - 0.5) * 12,
+        y: p.y,
+        vx: (Math.random() - 0.5) * 0.35,
+        vy: -0.6 - Math.random() * 1.1,
+        life: 1,
+        decay: 0.005 + Math.random() * 0.008,
+        hue,
+        size: 1.1 + Math.random() * 1.7,
+      };
+    }
+    for (let i = 0; i < SPARK_COUNT; i++) sparks.push(createSpark());
+
+    let frame = 0;
+    function drawFire() {
+      frame++;
+
+      // Плавное затухание → шлейф
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.fillStyle = 'rgba(0,0,0,0.20)';
+      ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+      ctx.globalCompositeOperation = 'lighter';
+
+      // Пламя по контуру
+      flameParticles.forEach(p => {
+        p.life += p.speed;
+        if (p.life > 1) {
+          p.life = 0;
+          if (Math.random() < 0.12) {
+            const np = contourPx[Math.floor(Math.random() * contourPx.length)];
+            p.baseX = np.x; p.baseY = np.y;
+          }
+        }
+
+        const wobbleX = Math.sin((frame + p.offsetSeed) * 0.05) * 2.5;
+        const wobbleY = Math.cos((frame + p.offsetSeed) * 0.04) * 2 - p.life * 9;
+        const x = p.baseX + wobbleX;
+        const y = p.baseY + wobbleY;
+        const r = p.radius * (1 - p.life * 0.35);
+        const alpha = (1 - p.life) * 0.42;
+
+        const grd = ctx.createRadialGradient(x, y, 0, x, y, r);
+        grd.addColorStop(0, `rgba(255, 240, 180, ${alpha})`);
+        grd.addColorStop(0.25, `rgba(255, 170, 60, ${alpha * 0.85})`);
+        grd.addColorStop(0.6, `rgba(255, 90, 30, ${alpha * 0.4})`);
+        grd.addColorStop(1, `rgba(180, 30, 10, 0)`);
+
+        ctx.fillStyle = grd;
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      // Искры
+      sparks.forEach((s, i) => {
+        s.x += s.vx;
+        s.y += s.vy;
+        s.vy += 0.004;
+        s.life -= s.decay;
+        if (s.life <= 0) { sparks[i] = createSpark(); return; }
+
+        const alpha = s.life;
+        const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, s.size * 4);
+        g.addColorStop(0, `hsla(${s.hue}, 100%, 85%, ${alpha})`);
+        g.addColorStop(0.4, `hsla(${s.hue}, 100%, 60%, ${alpha * 0.6})`);
+        g.addColorStop(1, `hsla(${s.hue}, 100%, 40%, 0)`);
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, s.size * 4, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = `hsla(${s.hue}, 100%, 95%, ${alpha})`;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      requestAnimationFrame(drawFire);
+    }
+
+    let fireTexture = null;
+    function buildFirePlane() {
+      fireTexture = new THREE.CanvasTexture(canvas);
+      fireTexture.colorSpace = THREE.SRGBColorSpace;
+
+      // В MindAR ширина маркера = 1.
+      // Высота маркера = 1 / aspect_маркера. Для нашей вертикальной козы aspect = 0.49,
+      // значит высота маркера ≈ 2.04.
+      // Плоскость огня делаем по размеру маркера + чуть больше, чтобы искры выходили за край.
+      const planeW = 1.0;
+      const planeH = planeW / KOZA_ASPECT;
+      // Чуть увеличим (искры выходят за контур)
+      const scale = 1.05;
+      const geo = new THREE.PlaneGeometry(planeW * scale, planeH * scale);
+      const mat = new THREE.MeshBasicMaterial({
+        map: fireTexture,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(0, 0, 0.01);
+      fireContainer.object3D.add(mesh);
+
+      function updateTexture() {
+        if (fireTexture) fireTexture.needsUpdate = true;
+        requestAnimationFrame(updateTexture);
+      }
+      updateTexture();
+    }
+
+    sceneEl.addEventListener('loaded', () => {
+      loaderSub.textContent = 'Готово!';
+      startBtn.style.display = 'inline-block';
+      buildFirePlane();
+      drawFire();
+    });
+
+    startBtn.addEventListener('click', async () => {
+      startBtn.disabled = true;
+      startBtn.textContent = 'Запускаю...';
+      try {
+        const mindarSystem = sceneEl.systems['mindar-image-system'];
+        await mindarSystem.start();
+        loader.classList.add('hidden');
+        setTimeout(() => hint.classList.add('hidden'), 4500);
+      } catch (err) {
+        loaderSub.innerHTML = 'Не удалось получить доступ к камере.<br>Проверь разрешение в настройках браузера.';
+        startBtn.style.display = 'none';
+        console.error(err);
+      }
+    });
+
+    targetEl.addEventListener('targetFound', () => {
+      status.textContent = '🔥 Магия активна';
+      hint.classList.add('hidden');
+    });
+    targetEl.addEventListener('targetLost', () => {
+      status.textContent = 'Ищу козу...';
+    });
+  </script>
+</body>
+</html>
