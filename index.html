@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Огненная коза</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #000; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+
+    #overlay {
+      position: fixed; inset: 0; pointer-events: none; z-index: 10;
+      display: flex; flex-direction: column; justify-content: space-between;
+      padding: env(safe-area-inset-top, 20px) 20px env(safe-area-inset-bottom, 20px) 20px;
+    }
+    #hint {
+      background: rgba(0,0,0,0.65); color: white; padding: 14px 18px;
+      border-radius: 12px; text-align: center; font-size: 15px;
+      line-height: 1.4; max-width: 360px; margin: 20px auto 0;
+      backdrop-filter: blur(10px); transition: opacity 0.4s;
+    }
+    #hint.hidden { opacity: 0; }
+    #status {
+      align-self: center; background: rgba(0,0,0,0.65); color: #fff;
+      padding: 8px 14px; border-radius: 20px; font-size: 13px;
+      margin-bottom: 20px; backdrop-filter: blur(10px);
+    }
+    #loader {
+      position: fixed; inset: 0;
+      background: radial-gradient(circle at center, #1a0f1a, #050308);
+      color: white;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      z-index: 100; font-size: 16px; text-align: center; padding: 20px;
+    }
+    #loader.hidden { display: none; }
+    .spinner {
+      width: 44px; height: 44px; border: 3px solid rgba(255,255,255,0.12);
+      border-top-color: #ff7b3d; border-radius: 50%;
+      animation: spin 0.9s linear infinite; margin-bottom: 20px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #start-btn {
+      pointer-events: auto;
+      background: linear-gradient(135deg, #ff7b3d, #b347ff);
+      color: white; border: none; padding: 16px 36px;
+      border-radius: 30px; font-size: 16px; font-weight: 600;
+      cursor: pointer; margin-top: 28px;
+      box-shadow: 0 4px 24px rgba(255,123,61,0.5);
+    }
+    #start-btn:active { transform: scale(0.97); }
+    .loader-title { font-size: 14px; opacity: 0.65; letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 8px; }
+    .loader-sub { font-size: 18px; font-weight: 500; }
+
+    #fire-video {
+      position: absolute; width: 1px; height: 1px;
+      opacity: 0; pointer-events: none;
+    }
+  </style>
+
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+</head>
+<body>
+
+  <div id="loader">
+    <div class="spinner"></div>
+    <div class="loader-title">Огненная коза</div>
+    <div class="loader-sub">Пробуждаем магию...</div>
+    <button id="start-btn" style="display:none;">Включить камеру</button>
+  </div>
+
+  <div id="overlay">
+    <div id="hint">Наведи камеру на игрушку</div>
+    <div id="status">Ищу козу...</div>
+  </div>
+
+  <!-- Видео с прозрачным фоном. Браузер сам выберет поддерживаемый формат. -->
+  <video id="fire-video"
+         loop muted playsinline webkit-playsinline autoplay
+         preload="auto" crossorigin="anonymous">
+    <source src="./fire_overlay.webm" type="video/webm">
+    <source src="./fire_overlay.mp4" type="video/mp4; codecs=hvc1">
+  </video>
+
+  <a-scene
+    mindar-image="imageTargetSrc: ./targets.mind; autoStart: false; uiLoading: no; uiError: no; uiScanning: no; maxTrack: 1; filterMinCF: 0.0001; filterBeta: 0.005;"
+    color-space="sRGB"
+    renderer="colorManagement: true, alpha: true, antialias: true"
+    vr-mode-ui="enabled: false"
+    device-orientation-permission-ui="enabled: false">
+
+    <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+
+    <a-entity id="target" mindar-image-target="targetIndex: 0">
+      <a-entity id="fire-container"></a-entity>
+    </a-entity>
+  </a-scene>
+
+  <script>
+    const loader = document.getElementById('loader');
+    const startBtn = document.getElementById('start-btn');
+    const loaderSub = loader.querySelector('.loader-sub');
+    const hint = document.getElementById('hint');
+    const status = document.getElementById('status');
+    const sceneEl = document.querySelector('a-scene');
+    const targetEl = document.getElementById('target');
+    const fireContainer = document.getElementById('fire-container');
+    const fireVideo = document.getElementById('fire-video');
+
+    // Соотношение сторон маркера козы
+    const KOZA_ASPECT = 0.4952;
+
+    function buildFirePlane() {
+      // Видео со встроенным альфа-каналом
+      const videoTexture = new THREE.VideoTexture(fireVideo);
+      videoTexture.minFilter = THREE.LinearFilter;
+      videoTexture.magFilter = THREE.LinearFilter;
+      videoTexture.format = THREE.RGBAFormat;
+      videoTexture.colorSpace = THREE.SRGBColorSpace;
+
+      // Простой материал — альфа уже в самом видео, ничего считать не надо
+      const material = new THREE.MeshBasicMaterial({
+        map: videoTexture,
+        transparent: true,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+
+      // Размер плоскости под маркер
+      const planeW = 1.0;
+      const planeH = planeW / KOZA_ASPECT;
+      const scale = 1.30;  // огонь охватывает всю козу с запасом
+      const geo = new THREE.PlaneGeometry(planeW * scale, planeH * scale);
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.position.set(0, 0, 0.02);
+      fireContainer.object3D.add(mesh);
+    }
+
+    function startVideoPlayback() {
+      const playPromise = fireVideo.play();
+      if (playPromise) {
+        playPromise.catch(err => {
+          console.warn('Видео не стартовало:', err);
+        });
+      }
+    }
+
+    sceneEl.addEventListener('loaded', () => {
+      loaderSub.textContent = 'Готово!';
+      startBtn.style.display = 'inline-block';
+      buildFirePlane();
+    });
+
+    startBtn.addEventListener('click', async () => {
+      startBtn.disabled = true;
+      startBtn.textContent = 'Запускаю...';
+      try {
+        startVideoPlayback();
+        const mindarSystem = sceneEl.systems['mindar-image-system'];
+        await mindarSystem.start();
+        loader.classList.add('hidden');
+        setTimeout(() => hint.classList.add('hidden'), 4500);
+      } catch (err) {
+        loaderSub.innerHTML = 'Не удалось получить доступ к камере.<br>Проверь разрешение в настройках браузера.';
+        startBtn.style.display = 'none';
+        console.error(err);
+      }
+    });
+
+    targetEl.addEventListener('targetFound', () => {
+      status.textContent = '🔥 Магия активна';
+      hint.classList.add('hidden');
+      if (fireVideo.paused) startVideoPlayback();
+    });
+    targetEl.addEventListener('targetLost', () => {
+      status.textContent = 'Ищу козу...';
+    });
+  </script>
+</body>
+</html>
